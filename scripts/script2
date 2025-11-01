@@ -1,0 +1,161 @@
+#!/bin/bash
+# ==============================================
+# Script Name: system_audit_script2.sh
+# Description: Advanced Threat & Performance Audit Script
+# Author: Daniel Uyo (Fixlab Technologies)
+# Purpose: Perform 30+ advanced cybersecurity and performance checks,
+#          detect anomalies, log suspicious behavior, and generate expert advice.
+# ==============================================
+
+# ============================
+# 📁 Create Report File
+# ============================
+timestamp=$(date +"%Y%m%d_%H%M%S")
+report_file="system_threat_audit_$timestamp.txt"
+touch "$report_file"
+
+echo "======================================================" >> "$report_file"
+echo " ADVANCED SYSTEM THREAT & PERFORMANCE AUDIT - $timestamp" >> "$report_file"
+echo " Author: Daniel Uyo (Fixlab Technologies)" >> "$report_file"
+echo "======================================================" >> "$report_file"
+echo "" >> "$report_file"
+
+# ============================
+# 🧠 System Load & Resource Summary
+# ============================
+echo "[+] Collecting System Load Information..." >> "$report_file"
+echo "Current Load Average:" >> "$report_file"
+uptime >> "$report_file"
+echo "" >> "$report_file"
+
+echo "[+] Checking CPU Usage by Top 10 Processes..." >> "$report_file"
+ps -eo pid,comm,%cpu,%mem --sort=-%cpu | head -n 10 >> "$report_file"
+echo "" >> "$report_file"
+
+echo "[+] Checking Memory Usage by Top Processes..." >> "$report_file"
+ps -eo pid,comm,%mem --sort=-%mem | head -n 10 >> "$report_file"
+echo "" >> "$report_file"
+
+# ============================
+# 🌐 Network Threat Surveillance
+# ============================
+echo "[+] Scanning for Unusual Network Activity..." >> "$report_file"
+netstat -ant | grep ESTABLISHED | awk '{print $5}' | sort | uniq -c | sort -nr | head -n 10 >> "$report_file"
+echo "" >> "$report_file"
+
+echo "[+] Listing Open Network Ports and Associated Processes..." >> "$report_file"
+lsof -i -n -P | grep LISTEN | head -n 20 >> "$report_file"
+echo "" >> "$report_file"
+
+# ============================
+# 🕵️ Suspicious File and Binary Analysis
+# ============================
+echo "[+] Scanning for Executables Modified in the Last 24 Hours..." >> "$report_file"
+find /usr/bin /usr/sbin -type f -mtime -1 2>/dev/null | head -n 20 >> "$report_file"
+echo "" >> "$report_file"
+
+echo "[+] Searching for Hidden or Unusual Directories..." >> "$report_file"
+find / -type d -name ".*" 2>/dev/null | grep -v "/proc" | head -n 15 >> "$report_file"
+echo "" >> "$report_file"
+
+# ============================
+# 🔒 File Integrity Check (Baseline Comparison)
+# ============================
+echo "[+] Verifying Integrity of System Binaries..." >> "$report_file"
+for bin in /bin/ls /bin/bash /usr/bin/sudo /usr/bin/passwd; do
+    md5sum $bin >> "$report_file"
+done
+echo "" >> "$report_file"
+
+# ============================
+# 🧩 Real-Time Log Threat Scan
+# ============================
+echo "[+] Checking Logs for Potential Intrusion Attempts..." >> "$report_file"
+grep -i "failed" /var/log/auth.log 2>/dev/null | tail -n 10 >> "$report_file"
+grep -i "error" /var/log/syslog 2>/dev/null | tail -n 10 >> "$report_file"
+grep -iE "attack|malware|unauthorized|denied" /var/log/* 2>/dev/null | head -n 10 >> "$report_file"
+echo "" >> "$report_file"
+
+# ============================
+# 🧱 Firewall & IDS Checks
+# ============================
+echo "[+] Checking Firewall Rules..." >> "$report_file"
+iptables -L -v -n 2>/dev/null | head -n 15 >> "$report_file"
+echo "" >> "$report_file"
+
+echo "[+] Checking IDS/IPS Services (Snort/Suricata/Wazuh)..." >> "$report_file"
+for tool in snort suricata wazuh-agent; do
+    if systemctl is-active --quiet $tool; then
+        echo "$tool is active" >> "$report_file"
+    else
+        echo "$tool is NOT active" >> "$report_file"
+    fi
+done
+echo "" >> "$report_file"
+
+# ============================
+# 🔍 Check for Running Cryptominers or Reverse Shells
+# ============================
+echo "[+] Scanning for Cryptominers or Reverse Shell Patterns..." >> "$report_file"
+ps aux | grep -E "nc |bash -i|curl|wget|crypt|miner" | grep -v grep >> "$report_file"
+echo "" >> "$report_file"
+
+# ============================
+# 🧠 Check System Persistence (Auto-start Entries)
+# ============================
+echo "[+] Reviewing Autostart Programs..." >> "$report_file"
+ls /etc/init.d /etc/systemd/system | grep ".service" | head -n 20 >> "$report_file"
+echo "" >> "$report_file"
+
+# ============================
+# 🔎 File Permission & SUID Audit
+# ============================
+echo "[+] Searching for Files with SUID Bit Set (Privilege Escalation Risk)..." >> "$report_file"
+find / -perm -4000 -type f 2>/dev/null | head -n 20 >> "$report_file"
+echo "" >> "$report_file"
+
+# ============================
+# 🧩 SSH Security and Config
+# ============================
+echo "[+] Checking SSH Config for Weak Settings..." >> "$report_file"
+grep -E "PermitRootLogin|PasswordAuthentication|AllowUsers" /etc/ssh/sshd_config 2>/dev/null >> "$report_file"
+echo "" >> "$report_file"
+
+# ============================
+# 🔄 Service Anomalies
+# ============================
+echo "[+] Detecting Failed or Inactive Services..." >> "$report_file"
+systemctl --failed | head -n 15 >> "$report_file"
+echo "" >> "$report_file"
+
+# ============================
+# 🧰 Installed Updates & Patch Status
+# ============================
+echo "[+] Checking for Available Security Updates..." >> "$report_file"
+apt list --upgradable 2>/dev/null | grep security >> "$report_file"
+echo "" >> "$report_file"
+
+# ============================
+# 🧠 Summary & Security Recommendations
+# ============================
+echo "======================================================" >> "$report_file"
+echo " 🔍 SUMMARY & SECURITY ADVICE" >> "$report_file"
+echo "======================================================" >> "$report_file"
+
+echo "
+📊 Based on the audit results:
+- Review all high CPU processes — terminate or investigate suspicious ones.
+- Inspect network connections to unknown foreign IPs.
+- Secure SSH access — disable root login and enforce key-based authentication.
+- Restrict SUID files — only retain those absolutely required.
+- Ensure IDS/IPS tools like Snort, Suricata, or Wazuh are active and updated.
+- Remove unrecognized binaries found in /usr/bin or /usr/sbin.
+- Review and rotate system logs weekly to prevent tampering.
+- Patch your system immediately if security updates are available.
+- Set up daily integrity monitoring using tripwire or AIDE.
+- Automate this audit script weekly using cron to maintain system hygiene.
+" >> "$report_file"
+
+echo "" >> "$report_file"
+echo "✅ Full report saved as: $report_file"
+echo "Audit complete — review recommendations and act immediately for better system security."
