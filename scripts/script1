@@ -1,0 +1,331 @@
+#!/bin/bash
+# ==============================================================
+# script1_basic_syssec.sh
+# Single-file: 20 practical system & cybersecurity automations
+# Each section:
+#  - prints a short description of the problem it solves
+#  - performs the check (read-only unless noted)
+#  - clearly explains how to interpret the output
+#
+# Usage: sudo bash scripts/script1_basic_syssec.sh
+# NOTE: some checks require sudo/root to read logs or create backups.
+# ==============================================================
+
+set -euo pipefail
+IFS=$'\n\t'
+
+echo "==================================================================="
+echo "    script1_basic_syssec.sh — 20 practical system & security checks"
+echo "    Run as root for full visibility: sudo ./script1_basic_syssec.sh"
+echo "==================================================================="
+echo
+
+# ---------------- 1 ----------------
+echo "01) PROBLEM: Disk space may run out and crash services."
+echo "   ACTION: Check root filesystem usage and warn if >80%."
+echo "   WHY: Full disks break logging, services fail; early alert prevents outages."
+USAGE=$(df --output=pcent / | tail -1 | tr -dc '0-9')
+echo "   Root usage: ${USAGE}%"
+if [ "$USAGE" -gt 80 ]; then
+  echo "   SOLUTION: Disk usage above 80% — investigate large files (du) and clean/extend disk."
+else
+  echo "   OK: Disk usage below threshold."
+fi
+# Expected Output example:
+#   Root usage: 32
+#   OK: Disk usage below threshold.
+echo
+
+# ---------------- 2 ----------------
+echo "02) PROBLEM: Unknown uptime or reboots (could indicate instability)."
+echo "   ACTION: Show system uptime and last reboot times."
+echo "   WHY: Unexpected reboots hint at crashes/power issues/attacks."
+echo "   OUTPUT:"
+uptime -p
+echo "   How it solves: if uptime is very short, investigate logs and hardware."
+# Expected Output example:
+#   up 2 days, 3 hours
+echo
+
+# ---------------- 3 ----------------
+echo "03) PROBLEM: High-memory processes cause instability."
+echo "   ACTION: Show top 5 memory-consuming processes."
+echo "   WHY: Identify processes that should be tuned or restarted."
+echo "   OUTPUT:"
+ps -eo pid,ppid,cmd,%mem,%cpu --sort=-%mem | head -n 6
+echo "   How it solves: kill/optimize offending process after investigation."
+# Expected Output example:
+#   PID  ... COMMAND        %MEM  %CPU
+#   2345    /usr/bin/firefox 12.3  8.0
+echo
+
+# ---------------- 4 ----------------
+echo "04) PROBLEM: Brute-force or credential stuffing on SSH."
+echo "   ACTION: Show recent failed SSH authentication attempts."
+echo "   WHY: Repeated 'Failed password' with same IP indicates brute-force."
+echo "   OUTPUT (last 50 lines):"
+if [ -r /var/log/auth.log ]; then
+  grep -i "failed password" /var/log/auth.log 2>/dev/null | tail -n 50 || echo "   (none found)"
+else
+  echo "   (auth.log not readable; try running as root or use journalctl)"
+  journalctl -u ssh -n 200 --no-pager | grep -i "failed password" | tail -n 50 || true
+fi
+echo "   How it solves: block offending IPs, enable fail2ban, or increase lockouts."
+# Expected Output example:
+#   Oct 30 ... Failed password for invalid user admin from 203.0.113.10 port 49213
+echo
+
+# ---------------- 5 ----------------
+echo "05) PROBLEM: New/unauthorized users added quietly."
+echo "   ACTION: Show accounts with home directories created/modified in last 7 days."
+echo "   WHY: Unauthorized accounts often appear with recent home dirs."
+echo "   OUTPUT:"
+now=$(date +%s)
+awk -F: '{ print $1 ":" $6 }' /etc/passwd | while IFS=: read -r user homedir; do
+  if [ -d "$homedir" ]; then
+    mtime=$(stat -c %Y "$homedir" 2>/dev/null || echo 0)
+    age_days=$(( (now - mtime) / 86400 ))
+    if [ "$age_days" -le 7 ]; then
+      echo "   $user  home: $homedir  (modified ${age_days} days ago)"
+    fi
+  fi
+done
+echo "   How it solves: investigate new accounts immediately."
+# Expected Output example:
+#   student1  home: /home/student1  (modified 2 days ago)
+echo
+
+# ---------------- 6 ----------------
+echo "06) PROBLEM: SUID/SGID binaries may be abused for privilege escalation."
+echo "   ACTION: List SUID/SGID files (top results)."
+echo "   WHY: SUID root binaries can be exploited when vulnerable."
+echo "   OUTPUT:"
+find / -xdev \( -perm -4000 -o -perm -2000 \) -type f -printf '%M %u %g %p\n' 2>/dev/null | head -n 40 || true
+echo "   How it solves: review uncommon SUID/SGID binaries and patch/remove where necessary."
+# Expected Output example:
+#   -rwsr-xr-x root root /usr/bin/sudo
+echo
+
+# ---------------- 7 ----------------
+echo "07) PROBLEM: World-writable files/directories create easy persistence."
+echo "   ACTION: Find world-writable files/directories (excluding /proc and /sys)."
+echo "   WHY: Attackers write scripts or drop payloads into world-writable paths."
+echo "   OUTPUT:"
+find / -xdev -path /proc -prune -o -path /sys -prune -o -type d -perm -0002 -printf 'DIR %M %u %g %p\n' 2>/dev/null | head -n 20
+find / -xdev -path /proc -prune -o -path /sys -prune -o -type f -perm -0002 -printf 'FILE %M %u %g %p\n' 2>/dev/null | head -n 20
+echo "   How it solves: remove world-write permissions where not intended (chmod)."
+# Expected Output example:
+#   DIR drwxrwxrwt root root /tmp
+echo
+
+# ---------------- 8 ----------------
+echo "08) PROBLEM: Unknown network connections / suspicious peers."
+echo "   ACTION: Show established connections (remote IPs)."
+echo "   WHY: Identify suspicious remote endpoints communicating with host."
+echo "   OUTPUT:"
+ss -tunp state established 2>/dev/null | sed -n '1,200p' || true
+echo "   How it solves: if odd remote IPs appear, investigate process owner and block IP."
+# Expected Output example:
+#   ESTAB  192.168.1.10:22 203.0.113.10:49213 users:(("sshd",pid=5678,fd=3))
+echo
+
+# ---------------- 9 ----------------
+echo "09) PROBLEM: Listening services expose attack surface."
+echo "   ACTION: Show listening ports and owning processes."
+echo "   WHY: Unapproved services on ports require hardening or removal."
+echo "   OUTPUT:"
+if command -v ss >/dev/null 2>&1; then
+  ss -tulpn | sed -n '1,200p'
+else
+  netstat -tulpn 2>/dev/null | sed -n '1,200p' || true
+fi
+echo "   How it solves: close/unbind unnecessary services or firewall them."
+# Expected Output example:
+#   LISTEN 0  128 0.0.0.0:22  0.0.0.0:* users:(("sshd",pid=5678,fd=3))
+echo
+
+# ---------------- 10 ----------------
+echo "10) PROBLEM: Suspicious processes running from writable dirs (/tmp, /dev/shm)."
+echo "   ACTION: List processes whose executable path resides under /tmp or /dev/shm or with no tty."
+echo "   WHY: Attackers often run payloads from writable dirs and detach from tty."
+echo "   OUTPUT:"
+ps aux --no-heading | while read -r line; do
+  exe=$(echo "$line" | awk '{print $11}')
+  pid=$(echo "$line" | awk '{print $2}')
+  if [[ "$exe" == /tmp/* || "$exe" == /dev/shm/* || "$(echo "$line" | awk '{print $7}')" == "?" ]]; then
+    echo "   $line"
+  fi
+done | head -n 40 || true
+echo "   How it solves: spot and investigate odd detached processes."
+# Expected Output example:
+#   root  7890 ... /tmp/.xqwe
+echo
+
+# ---------------- 11 ----------------
+echo "11) PROBLEM: /etc tampering — need baseline integrity."
+echo "   ACTION: Show how to create a checksum baseline (requires root)."
+echo "   WHY: Baseline enables change detection for config tampering."
+if [ "$(id -u)" -ne 0 ]; then
+  echo "   NOTE: run as root to generate baseline. Skipping generation."
+  echo "   To create baseline: sudo find /etc -type f -print0 | sudo xargs -0 sha256sum > /root/etc.sha256"
+else
+  echo "   Generating baseline now (this may take time)..."
+  find /etc -type f -print0 | xargs -0 sha256sum > /root/etc.sha256
+  echo "   Baseline saved to /root/etc.sha256"
+fi
+echo "   How it solves: later run 'sha256sum -c /root/etc.sha256' to detect changes."
+# Expected Output example (if run as root):
+#   Baseline saved to /root/etc.sha256
+echo
+
+# ---------------- 12 ----------------
+echo "12) PROBLEM: Log tampering or log flooding (large logs)."
+echo "   ACTION: List log files in /var/log modified in last 24h and files >100MB."
+echo "   WHY: Huge or rapidly growing logs can indicate attacks or issues."
+echo "   OUTPUT (recently modified):"
+find /var/log -type f -mtime -1 -printf '%TY-%Tm-%Td %TT %p\n' 2>/dev/null | sort -r | head -n 50 || true
+echo "   OUTPUT (larger than 100MB):"
+find /var/log -type f -size +100M -printf '%s %p\n' 2>/dev/null | sort -nr | head -n 20 || true
+echo "   How it solves: rotate/inspect large logs to identify root cause."
+# Expected Output example:
+#   2025-11-01 01:45:20 /var/log/auth.log
+#   234567890 /var/log/syslog
+echo
+
+# ---------------- 13 ----------------
+echo "13) PROBLEM: Critical security services might be stopped."
+echo "   ACTION: Check status of ssh, ufw, fail2ban (if installed)."
+echo "   WHY: Services must run to provide access control and mitigation."
+services=(ssh ufw fail2ban)
+for s in "${services[@]}"; do
+  echo "   Service: $s"
+  if systemctl list-unit-files | grep -q "^$s"; then
+    systemctl is-active --quiet "$s" && echo "     ACTIVE" || echo "     INACTIVE"
+  else
+    echo "     NOT INSTALLED"
+  fi
+done
+echo "   How it solves: restart/enable missing services and configure them."
+# Expected Output example:
+#   Service: ssh  ACTIVE
+#   Service: ufw  INACTIVE
+echo
+
+# ---------------- 14 ----------------
+echo "14) PROBLEM: Firewall misconfiguration or lack of rules."
+echo "   ACTION: Show UFW status or iptables rules (if UFW not installed)."
+echo "   WHY: Proper firewall rules limit exposure."
+if command -v ufw >/dev/null 2>&1; then
+  echo "   UFW status:"
+  ufw status verbose || true
+else
+  echo "   iptables rules:"
+  iptables -L -n -v || true
+fi
+echo "   How it solves: confirm restrictive allow-list rules and block unnecessary ports."
+# Expected Output example:
+#   Status: active
+#   22/tcp ALLOW IN Anywhere
+echo
+
+# ---------------- 15 ----------------
+echo "15) PROBLEM: Hidden or malicious scheduled tasks (cron)."
+echo "   ACTION: Show system cron dirs and root/user crontabs."
+echo "   WHY: Persistence can be achieved via cron jobs."
+echo "   System cron directories:"
+ls -la /etc/cron.* 2>/dev/null || true
+echo "   Root crontab (if present):"
+crontab -l 2>/dev/null || echo "   (no root crontab or need sudo)"
+echo "   User crontabs (spool):"
+ls -la /var/spool/cron/crontabs 2>/dev/null || true
+echo "   How it solves: remove suspicious entries and secure crontab files."
+# Expected Output example:
+#   /etc/cron.daily
+#   (root crontab shows suspicious wget to /tmp)
+echo
+
+# ---------------- 16 ----------------
+echo "16) PROBLEM: World-writable or sticky files in home dir."
+echo "   ACTION: Show hidden files in /home and world-writable files under /home."
+echo "   WHY: Attackers place scripts in home folders or exploit permissive files."
+echo "   OUTPUT:"
+find /home -maxdepth 3 -type f -name ".*" -printf '%M %u %p\n' 2>/dev/null | head -n 40 || true
+find /home -type f -perm -0002 -printf '%M %u %p\n' 2>/dev/null | head -n 40 || true
+echo "   How it solves: remove strange hidden files and fix permissions (chmod)."
+# Expected Output example:
+#   -rw------- daniel /home/daniel/.bash_history
+echo
+
+# ---------------- 17 ----------------
+echo "17) PROBLEM: Weak SSH config (root login allowed / protocol issues)."
+echo "   ACTION: Report PermitRootLogin and PasswordAuthentication settings from sshd_config."
+echo "   WHY: Disallow root login and use key-based auth to reduce risk."
+echo "   OUTPUT:"
+if [ -f /etc/ssh/sshd_config ]; then
+  grep -Ei '^\s*PermitRootLogin|^\s*PasswordAuthentication' /etc/ssh/sshd_config || echo "   (not set explicitly)"
+else
+  echo "   sshd_config not found."
+fi
+echo "   How it solves: set PermitRootLogin no and PasswordAuthentication no for stronger security."
+# Expected Output example:
+#   PermitRootLogin no
+#   PasswordAuthentication no
+echo
+
+# ---------------- 18 ----------------
+echo "18) PROBLEM: Large or suspicious files in /tmp indicating dropped payloads."
+echo "   ACTION: List executable files in /tmp and show biggest ones."
+echo "   WHY: Attackers use /tmp to stage payloads."
+echo "   OUTPUT:"
+find /tmp -maxdepth 2 -type f -executable -printf '%s %p\n' 2>/dev/null | sort -rn | head -n 20 || true
+echo "   How it solves: remove/inspect executables and set secure tmp mount options."
+# Expected Output example:
+#   123456 /tmp/malwareX
+echo
+
+# ---------------- 19 ----------------
+echo "19) PROBLEM: Need daily summary for triage by analyst."
+echo "   ACTION: Create a compact daily security report at /tmp/security_report.txt"
+REPORT=/tmp/security_report.txt
+{
+  echo "Security Report - $(date)"
+  echo "----------------------------------------"
+  echo "Uptime: $(uptime -p)"
+  echo "Top CPU process:"
+  ps -eo comm,%cpu --sort=-%cpu | sed -n '2,3p'
+  echo
+  echo "Recent failed SSH (last 10):"
+  if [ -r /var/log/auth.log ]; then
+    grep -i "failed password" /var/log/auth.log | tail -n 10 || true
+  else
+    journalctl -u ssh -n 200 --no-pager | grep -i "failed password" | tail -n 10 || true
+  fi
+  echo
+  echo "World-writable dirs:"
+  find / -xdev -type d -perm -0002 -printf '%M %u %g %p\n' 2>/dev/null | head -n 20 || true
+  echo
+  echo "Large logs (>100MB):"
+  find /var/log -type f -size +100M -printf '%s %p\n' 2>/dev/null | sort -rn | head -n 10 || true
+} > "$REPORT"
+echo "   Report saved to $REPORT"
+echo "   How it solves: Analyst has a single triage file to prioritize investigation."
+# Expected Output example:
+#   Report saved to /tmp/security_report.txt
+echo
+
+# ---------------- 20 ----------------
+echo "20) PROBLEM: Repeating manual checks is tedious."
+echo "   ACTION: Print recommended cron entries (admin can paste into crontab -e)"
+echo "   WHY: Automate periodic execution of security checks and backups."
+echo "   SUGGESTED CRON LINES (do not auto-install):"
+echo "     # Daily security report at 03:05"
+echo "     5 3 * * * /root/scripts/script1_basic_syssec.sh > /var/log/syssec_daily.log 2>&1"
+echo "     # Weekly /etc backup (Sunday 02:30)"
+echo "     30 2 * * 0 /root/scripts/backup_etc.sh"
+echo "   How it solves: schedule triage & backups for consistent defense posture."
+echo
+
+echo "==================================================================="
+echo "All checks completed. Review outputs above and the report at $REPORT (if created)."
+echo "Actions to take: investigate flagged entries, block IPs, patch vulnerable services, harden configs."
+echo "==================================================================="
