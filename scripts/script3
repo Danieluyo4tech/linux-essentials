@@ -1,0 +1,188 @@
+#!/bin/bash
+# ==============================================
+# Script Name: system_audit_script3.sh
+# Description: Incident Response & Threat Forensics Script
+# Author: Daniel Uyo (Fixlab Technologies)
+# Purpose: Perform 30+ advanced forensic and incident response checks,
+#          identify security breaches, collect digital evidence,
+#          and provide expert recommendations based on findings.
+# ==============================================
+
+# ============================
+# 📁 Create Report File
+# ============================
+timestamp=$(date +"%Y%m%d_%H%M%S")
+report_file="incident_forensics_audit_$timestamp.txt"
+touch "$report_file"
+
+echo "======================================================" >> "$report_file"
+echo " INCIDENT RESPONSE & THREAT FORENSICS AUDIT - $timestamp" >> "$report_file"
+echo " Author: Daniel Uyo (Fixlab Technologies)" >> "$report_file"
+echo "======================================================" >> "$report_file"
+echo "" >> "$report_file"
+
+# ============================
+# 🧠 System Overview
+# ============================
+echo "[+] Collecting Basic System Info..." >> "$report_file"
+echo "Hostname: $(hostname)" >> "$report_file"
+echo "OS Version: $(cat /etc/os-release | grep PRETTY_NAME | cut -d= -f2)" >> "$report_file"
+echo "Kernel: $(uname -r)" >> "$report_file"
+echo "Uptime: $(uptime -p)" >> "$report_file"
+echo "" >> "$report_file"
+
+# ============================
+# 🧩 Suspicious Log Activity
+# ============================
+echo "[+] Reviewing Authentication Logs for Intrusion Patterns..." >> "$report_file"
+grep -iE "Failed password|Invalid user|authentication failure" /var/log/auth.log 2>/dev/null | tail -n 20 >> "$report_file"
+echo "" >> "$report_file"
+
+echo "[+] Reviewing Syslog for Critical Kernel or Security Errors..." >> "$report_file"
+grep -iE "segfault|panic|error|unauthorized|malware|exploit" /var/log/syslog 2>/dev/null | tail -n 20 >> "$report_file"
+echo "" >> "$report_file"
+
+# ============================
+# 🌐 Network Connection Timeline
+# ============================
+echo "[+] Listing Active Network Connections (Established)..." >> "$report_file"
+ss -tuna | grep ESTAB | awk '{print $5}' | sort | uniq -c | sort -nr | head -n 15 >> "$report_file"
+echo "" >> "$report_file"
+
+echo "[+] Detecting Unusual Outbound Connections..." >> "$report_file"
+netstat -ant | grep ESTABLISHED | grep -v "127.0.0.1" | awk '{print $5}' | cut -d: -f1 | sort | uniq -c | sort -nr | head -n 10 >> "$report_file"
+echo "" >> "$report_file"
+
+# ============================
+# 🔍 Memory and Process Inspection
+# ============================
+echo "[+] Listing Suspicious Memory-Heavy Processes..." >> "$report_file"
+ps aux --sort=-%mem | head -n 15 >> "$report_file"
+echo "" >> "$report_file"
+
+echo "[+] Detecting Processes Without Associated Executables..." >> "$report_file"
+for pid in $(ls /proc | grep "^[0-9]"); do
+    if [ ! -e "/proc/$pid/exe" ]; then
+        echo "PID $pid has no executable file (possible stealth process)" >> "$report_file"
+    fi
+done
+echo "" >> "$report_file"
+
+# ============================
+# 🕵️ Malicious Persistence & Backdoors
+# ============================
+echo "[+] Searching for Suspicious Startup Scripts or Backdoors..." >> "$report_file"
+grep -r "bash -i\|nc \|curl \|wget \|/bin/sh" /etc/init.d /etc/systemd/system /etc/rc*.d 2>/dev/null | head -n 20 >> "$report_file"
+echo "" >> "$report_file"
+
+# ============================
+# 🔒 User Account Forensics
+# ============================
+echo "[+] Checking for Recently Added or Modified Users..." >> "$report_file"
+awk -F: '{if ($3 >= 1000) print $1, $3}' /etc/passwd | tail -n 10 >> "$report_file"
+echo "" >> "$report_file"
+
+echo "[+] Checking for Accounts with UID 0 (Root Privileges)..." >> "$report_file"
+awk -F: '($3 == 0) {print $1}' /etc/passwd >> "$report_file"
+echo "" >> "$report_file"
+
+# ============================
+# 🧩 SSH Key & Remote Access Traces
+# ============================
+echo "[+] Listing SSH Authorized Keys for All Users..." >> "$report_file"
+find /home /root -type f -name "authorized_keys" -exec ls -l {} \; 2>/dev/null >> "$report_file"
+echo "" >> "$report_file"
+
+echo "[+] Checking SSH Configuration for Insecure Settings..." >> "$report_file"
+grep -E "PermitRootLogin|PasswordAuthentication|AllowUsers" /etc/ssh/sshd_config 2>/dev/null >> "$report_file"
+echo "" >> "$report_file"
+
+# ============================
+# 🔍 File and Directory Evidence Collection
+# ============================
+echo "[+] Searching for Recently Modified Executables (Last 2 Days)..." >> "$report_file"
+find /bin /usr/bin /sbin /usr/local/bin -type f -mtime -2 2>/dev/null | head -n 20 >> "$report_file"
+echo "" >> "$report_file"
+
+echo "[+] Scanning for Hidden Files in /tmp and /var/tmp..." >> "$report_file"
+find /tmp /var/tmp -type f -name ".*" 2>/dev/null | head -n 15 >> "$report_file"
+echo "" >> "$report_file"
+
+# ============================
+# ⚙️ Kernel & Module Integrity
+# ============================
+echo "[+] Checking Loaded Kernel Modules..." >> "$report_file"
+lsmod | head -n 20 >> "$report_file"
+echo "" >> "$report_file"
+
+echo "[+] Checking for Unauthorized Kernel Modules..." >> "$report_file"
+lsmod | grep -E "rootkit|hacker|backdoor" >> "$report_file" || echo "No suspicious kernel modules found." >> "$report_file"
+echo "" >> "$report_file"
+
+# ============================
+# 🧱 Firewall and Security Controls
+# ============================
+echo "[+] Checking Firewall Rules (iptables)..." >> "$report_file"
+iptables -L -v -n 2>/dev/null | head -n 20 >> "$report_file"
+echo "" >> "$report_file"
+
+echo "[+] Checking if AppArmor or SELinux is Active..." >> "$report_file"
+if command -v getenforce >/dev/null 2>&1; then
+    getenforce >> "$report_file"
+elif command -v aa-status >/dev/null 2>&1; then
+    aa-status >> "$report_file"
+else
+    echo "SELinux/AppArmor not installed." >> "$report_file"
+fi
+echo "" >> "$report_file"
+
+# ============================
+# 🧩 Rootkit & Malware Scan
+# ============================
+echo "[+] Running Quick Rootkit and Malware Scan..." >> "$report_file"
+if command -v chkrootkit >/dev/null 2>&1; then
+    chkrootkit 2>/dev/null | grep -v "not infected" | head -n 20 >> "$report_file"
+else
+    echo "chkrootkit not installed." >> "$report_file"
+fi
+echo "" >> "$report_file"
+
+# ============================
+# 🧩 Log Tampering Detection
+# ============================
+echo "[+] Checking for Log File Deletion or Manipulation..." >> "$report_file"
+find /var/log -type f -mtime -1 -size 0 | head -n 10 >> "$report_file"
+echo "" >> "$report_file"
+
+# ============================
+# 🔍 Disk Space and Mount Points
+# ============================
+echo "[+] Checking for Unusual Mount Points or New Devices..." >> "$report_file"
+mount | grep -v "proc" >> "$report_file"
+echo "" >> "$report_file"
+
+# ============================
+# 🧠 Summary & Security Recommendations
+# ============================
+echo "======================================================" >> "$report_file"
+echo " 🧠 INCIDENT SUMMARY & RESPONSE ADVICE" >> "$report_file"
+echo "======================================================" >> "$report_file"
+
+echo "
+📊 Based on this forensic audit:
+- Review abnormal network connections and identify unknown IP addresses.
+- Investigate modified binaries within /usr/bin and /sbin.
+- Audit startup scripts for malicious persistence.
+- Remove or disable unknown user accounts, especially UID 0 duplicates.
+- Ensure firewall rules are active and restrictive.
+- Verify SSH settings — disable root login and password authentication.
+- If rootkit traces found, isolate the system and perform a full reimage.
+- Archive all logs before further modification for digital evidence.
+- Create forensic disk images before cleaning compromised files.
+- Enable AppArmor or SELinux enforcement.
+- Deploy centralized logging (e.g., Wazuh/Splunk) for continuous monitoring.
+" >> "$report_file"
+
+echo "" >> "$report_file"
+echo "✅ Full incident report saved as: $report_file"
+echo "Forensic audit complete — analyze report and follow response steps immediately for threat containment and recovery."
